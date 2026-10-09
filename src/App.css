@@ -878,3 +878,67 @@ footer small {
 .auth-button:hover {
   opacity: 0.75;
 }
+/* Gallery photo search */
+.gallery-search {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 600px);
+  margin: 28px auto;
+  padding: 0 12px;
+  box-sizing: border-box;
+}
+
+.gallery-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 14px 18px;
+  border: 1px solid #c8d8cb;
+  border-radius: 30px;
+  background: #ffffff;
+  color: #26352b;
+  font-size: 16px;
+  outline: none;
+}
+
+.gallery-search input:focus {
+  border-color: #5f9a70;
+  box-shadow: 0 0 0 3px rgba(95, 154, 112, 0.15);
+}
+
+.gallery-search button {
+  padding: 12px 18px;
+  border: none;
+  border-radius: 25px;
+  background: #dcefe2;
+  color: #26352b;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.gallery-search button:hover {
+  background: #c8e3cf;
+}
+
+.search-empty {
+  margin: 24px auto;
+  text-align: center;
+  color: #526657;
+}
+
+@media (max-width: 480px) {
+  .gallery-search {
+    gap: 6px;
+    padding: 0 4px;
+  }
+
+  .gallery-search input {
+    padding: 12px;
+    font-size: 14px;
+  }
+
+  .gallery-search button {
+    padding: 11px 13px;
+  }
+}

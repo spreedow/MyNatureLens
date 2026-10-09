@@ -53,6 +53,7 @@ useEffect(() => {
   const [name, setName] = useState("");
 const [email, setEmail] = useState("");
 const [description, setDescription] = useState("");
+const [searchTerm, setSearchTerm] = useState("");
 const [selectedFile, setSelectedFile] = useState(null);
 const [communityPhotos, setCommunityPhotos] = useState([]);
 const [uploadMessage, setUploadMessage] = useState("");
@@ -220,8 +221,13 @@ const handleDeletePhoto = async (photo) => {
     { image: photo6, title: "A Moment in Nature" },
   ];
 
-  // Show both the original featured photos and photos submitted by visitors.
-  const photos = [...featuredPhotos, ...communityPhotos];
+  // Combine featured photos and community-submitted photos.
+const photos = [...featuredPhotos, ...communityPhotos];
+
+// Search photos by title, ignoring uppercase/lowercase differences.
+const filteredPhotos = photos.filter((photo) =>
+  photo.title.toLowerCase().includes(searchTerm.trim().toLowerCase())
+);
 
   const currentIndex = selectedPhoto
     ? photos.findIndex((photo) => photo.image === selectedPhoto.image)
@@ -308,11 +314,31 @@ const handleDeletePhoto = async (photo) => {
           <h2>🌿 Featured Nature</h2>
 
           <p className="section-description">
-            Discover the beauty of nature through photography.
-          </p>
+  Discover the beauty of nature through photography.
+</p>
 
-          <div className="photo-grid">
-            {photos.map((photo, index) => (
+{/* Search photos */}
+<div className="gallery-search">
+  <input
+    type="search"
+    placeholder="🔍 Search photos by name..."
+    aria-label="Search photos by name"
+    value={searchTerm}
+    onChange={(event) => setSearchTerm(event.target.value)}
+  />
+
+  {searchTerm && (
+    <button
+      type="button"
+      onClick={() => setSearchTerm("")}
+    >
+      Clear
+    </button>
+  )}
+</div>
+
+<div className="photo-grid">
+            {filteredPhotos.map((photo, index) => (
               <div
                 className="photo-card"
                 key={index}
@@ -331,6 +357,11 @@ const handleDeletePhoto = async (photo) => {
               </div>
             ))}
           </div>
+          {filteredPhotos.length === 0 && (
+  <p className="search-empty">
+    No photos found. Try another name. 🌿
+  </p>
+)}
         </section>
 
         {/* About */}
