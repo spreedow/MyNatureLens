@@ -1,6 +1,7 @@
 import "./App.css";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Auth from "./Auth";
+import { supabase } from "./supabaseClient";
 
 import photo1 from "./assets/photos/IMG_20240425_220604.jpg";
 import photo2 from "./assets/photos/IMG20260923091711.jpg";
@@ -10,11 +11,151 @@ import photo5 from "./assets/photos/Picsart_26-09-20_10-05-25-408.jpg";
 import photo6 from "./assets/photos/Picsart_26-09-20_10-07-27-188.jpg";
 
 function App() {
-  const [showAuth, setShowAuth] = useState(false);
+  const [showAuth, setShowAuth] = useState(() => {
+  return (
+    window.location.hash.includes("type=recovery") ||
+    new URLSearchParams(window.location.search).get("type") === "recovery"
+  );
+});
+
+const [user, setUser] = useState(null);
+useEffect(() => {
+  const getUser = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    setUser(user);
+  };
+
+  getUser();
+
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange((event, session) => {
+    setUser(session?.user ?? null);
+
+    if (event === "SIGNED_IN") {
+      setShowAuth(false);
+    }
+  });
+
+  return () => subscription.unsubscribe();
+}, []);
+
+
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [showForm, setShowForm] = useState(false);
 
-  const photos = [
+  const [name, setName] = useState("");
+const [email, setEmail] = useState("");
+const [description, setDescription] = useState("");
+const [selectedFile, setSelectedFile] = useState(null);
+const [communityPhotos, setCommunityPhotos] = useState([]);
+const [uploadMessage, setUploadMessage] = useState("");
+const [isSubmitting, setIsSubmitting] = useState(false);
+const submissionLock = useRef(false);
+
+const loadCommunityPhotos = async () => {
+  const { data, error } = await supabase
+    .from("photos")
+    .select("title, description, image_url");
+
+  if (error) {
+    console.error("Could not load community photos:", error.message);
+    return;
+  }
+
+  setCommunityPhotos(
+    (data || [])
+      .filter((photo) => photo.image_url)
+      .map((photo) => ({
+        image: photo.image_url,
+        title: photo.title || "Nature Photo",
+        description: photo.description || "",
+        isCommunityPhoto: true,
+      }))
+  );
+};
+
+useEffect(() => {
+  loadCommunityPhotos();
+}, []);
+
+const handlePhotoSubmit = async (event) => {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+
+  // A ref blocks rapid repeated clicks before React updates button state.
+  if (submissionLock.current) return;
+
+  submissionLock.current = true;
+  setIsSubmitting(true);
+  setUploadMessage("");
+
+  try {
+    if (!user) {
+      setUploadMessage("Please log in before submitting a photo.");
+      return;
+    }
+
+    if (!selectedFile) {
+      setUploadMessage("Please choose a photo.");
+      return;
+    }
+
+    if (!selectedFile.type.startsWith("image/")) {
+      setUploadMessage("Please choose a valid image file.");
+      return;
+    }
+
+    setUploadMessage("Uploading your photo...");
+
+    const fileExtension = selectedFile.name.split(".").pop() || "jpg";
+    const fileName = `${user.id}/${crypto.randomUUID()}.${fileExtension}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("photos")
+      .upload(fileName, selectedFile, { upsert: false });
+
+    if (uploadError) {
+      throw new Error(`Photo upload failed: ${uploadError.message}`);
+    }
+
+    const { data } = supabase.storage.from("photos").getPublicUrl(fileName);
+    const publicUrl = data.publicUrl;
+
+    // This is the only database insert for one submission.
+    const { error: databaseError } = await supabase
+      .from("photos")
+      .insert({
+        title: name.trim() || "Nature Photo",
+        description: description.trim(),
+        image_url: publicUrl,
+      });
+
+    if (databaseError) {
+      throw new Error(
+        `Photo uploaded, but saving its information failed: ${databaseError.message}`
+      );
+    }
+
+    await loadCommunityPhotos();
+    setUploadMessage("🌿 Your photo was submitted successfully!");
+    setName("");
+    setEmail("");
+    setDescription("");
+    setSelectedFile(null);
+    formElement.reset();
+  } catch (error) {
+    setUploadMessage(error?.message || "Something went wrong. Please try again.");
+  } finally {
+    submissionLock.current = false;
+    setIsSubmitting(false);
+  }
+};
+
+  const featuredPhotos = [
     { image: photo1, title: "Nature Moment" },
     { image: photo2, title: "Natural Beauty" },
     { image: photo3, title: "Details of Nature" },
@@ -22,6 +163,9 @@ function App() {
     { image: photo5, title: "Through My Lens" },
     { image: photo6, title: "A Moment in Nature" },
   ];
+
+  // Show both the original featured photos and photos submitted by visitors.
+  const photos = [...featuredPhotos, ...communityPhotos];
 
   const currentIndex = selectedPhoto
     ? photos.findIndex((photo) => photo.image === selectedPhoto.image)
@@ -54,12 +198,23 @@ function App() {
           <a href="#about">About</a>
           <a href="#share">📷 Share Your Photo</a>
 
-          <button
-  className="auth-button"
-  onClick={() => setShowAuth(true)}
->
-  🌿 Login / Sign Up
-</button>
+          {user ? (
+  <button
+    className="auth-button"
+    onClick={async () => {
+      await supabase.auth.signOut();
+    }}
+  >
+    🚪 Logout
+  </button>
+) : (
+  <button
+    className="auth-button"
+    onClick={() => setShowAuth(true)}
+  >
+    🌿 Login / Sign Up
+  </button>
+)}
         </nav>
       </header>
 
@@ -157,7 +312,14 @@ function App() {
 
           <button
             className="share-button"
-            onClick={() => setShowForm(true)}
+            onClick={() => {
+  if (!user) {
+    setShowAuth(true);
+    return;
+  }
+
+  setShowForm(true);
+}}
           >
             📷 Submit Your Photo
           </button>
@@ -214,50 +376,58 @@ function App() {
               with the MyNatureLens community.
             </p>
 
-            <form>
+            <form onSubmit={handlePhotoSubmit}>
               <label>
-                Your Name
                 <input
-                  type="text"
-                  placeholder="Enter your name"
-                />
+  type="text"
+  placeholder="Enter your name"
+  value={name}
+  onChange={(event) => setName(event.target.value)}
+/>
               </label>
 
               <label>
                 Email
                 <input
-                  type="email"
-                  placeholder="Enter your email"
-                />
+  type="email"
+  placeholder="Enter your email"
+  value={email}
+  onChange={(event) => setEmail(event.target.value)}
+/>
               </label>
 
               <label>
                 Choose Your Photo
                 <input
-                  type="file"
-                  accept="image/*"
-                />
+  type="file"
+  accept="image/*"
+  onChange={(event) => setSelectedFile(event.target.files[0])}
+/>
               </label>
 
               <label>
                 Tell Us About Your Photo
                 <textarea
-                  placeholder="Tell us about the moment you captured..."
-                  rows="5"
-                ></textarea>
+  placeholder="Tell us about the moment you captured..."
+  rows="5"
+  value={description}
+  onChange={(event) => setDescription(event.target.value)}
+></textarea>
               </label>
 
               <button
-                type="button"
+                type="submit"
                 className="submit-photo-button"
-                onClick={() => {
-                  alert(
-                    "Your photo submission form is ready. We will connect it to the MyNatureLens upload system next."
-                  );
-                }}
+                disabled={isSubmitting}
               >
-                📤 Submit Photo
+                {isSubmitting ? "Uploading..." : "📤 Submit Photo"}
               </button>
+
+              {uploadMessage && (
+                <p role="status" aria-live="polite">
+                  {uploadMessage}
+                </p>
+              )}
             </form>
           </div>
         </div>
