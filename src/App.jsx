@@ -46,6 +46,9 @@ useEffect(() => {
 
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
+  const [deletingPhotoId, setDeletingPhotoId] = useState(null);
+  const [accountMessage, setAccountMessage] = useState("");
 
   const [name, setName] = useState("");
 const [email, setEmail] = useState("");
@@ -59,7 +62,7 @@ const submissionLock = useRef(false);
 const loadCommunityPhotos = async () => {
   const { data, error } = await supabase
     .from("photos")
-    .select("title, description, image_url");
+    .select("id, user_id, title, description, image_url");
 
   if (error) {
     console.error("Could not load community photos:", error.message);
@@ -73,6 +76,8 @@ const loadCommunityPhotos = async () => {
         image: photo.image_url,
         title: photo.title || "Nature Photo",
         description: photo.description || "",
+        id: photo.id,
+        userId: photo.user_id,
         isCommunityPhoto: true,
       }))
   );
@@ -129,6 +134,7 @@ const handlePhotoSubmit = async (event) => {
     const { error: databaseError } = await supabase
       .from("photos")
       .insert({
+        user_id: user.id,
         title: name.trim() || "Nature Photo",
         description: description.trim(),
         image_url: publicUrl,
@@ -152,6 +158,56 @@ const handlePhotoSubmit = async (event) => {
   } finally {
     submissionLock.current = false;
     setIsSubmitting(false);
+  }
+};
+
+const handleDeletePhoto = async (photo) => {
+  if (!user || !photo?.id || photo.userId !== user.id) {
+    setAccountMessage("You can delete only photos uploaded by your own account.");
+    return;
+  }
+
+  const confirmed = window.confirm("Delete this photo permanently? This cannot be undone.");
+  if (!confirmed) return;
+
+  setDeletingPhotoId(photo.id);
+  setAccountMessage("");
+
+  try {
+    // Public Storage URLs contain the object path after this marker.
+    const marker = "/storage/v1/object/public/photos/";
+    const markerIndex = photo.image.indexOf(marker);
+    if (markerIndex === -1) {
+      throw new Error("Could not identify this photo's storage path.");
+    }
+    const storagePath = decodeURIComponent(photo.image.slice(markerIndex + marker.length));
+
+    // Remove the image first. If Storage denies deletion, keep the database row.
+    const { error: storageError } = await supabase.storage
+      .from("photos")
+      .remove([storagePath]);
+
+    if (storageError) {
+      throw new Error(`Could not delete the image file: ${storageError.message}`);
+    }
+
+    const { error: rowError } = await supabase
+      .from("photos")
+      .delete()
+      .eq("id", photo.id)
+      .eq("user_id", user.id);
+
+    if (rowError) {
+      throw new Error(`Image deleted, but its database record could not be deleted: ${rowError.message}`);
+    }
+
+    await loadCommunityPhotos();
+    setAccountMessage("Photo deleted successfully.");
+    setSelectedPhoto(null);
+  } catch (error) {
+    setAccountMessage(error?.message || "Could not delete this photo.");
+  } finally {
+    setDeletingPhotoId(null);
   }
 };
 
@@ -199,22 +255,19 @@ const handlePhotoSubmit = async (event) => {
           <a href="#share">📷 Share Your Photo</a>
 
           {user ? (
-  <button
-    className="auth-button"
-    onClick={async () => {
-      await supabase.auth.signOut();
-    }}
-  >
-    🚪 Logout
-  </button>
-) : (
-  <button
-    className="auth-button"
-    onClick={() => setShowAuth(true)}
-  >
-    🌿 Login / Sign Up
-  </button>
-)}
+            <>
+              <button className="auth-button" onClick={() => { setAccountMessage(""); setShowAccount(true); }}>
+                👤 My Account
+              </button>
+              <button className="auth-button" onClick={async () => { await supabase.auth.signOut(); setShowAccount(false); }}>
+                🚪 Logout
+              </button>
+            </>
+          ) : (
+            <button className="auth-button" onClick={() => setShowAuth(true)}>
+              🌿 Login / Sign Up
+            </button>
+          )}
         </nav>
       </header>
 
@@ -266,9 +319,11 @@ const handlePhotoSubmit = async (event) => {
                 onClick={() => setSelectedPhoto(photo)}
               >
                 <img
-                  src={photo.image}
-                  alt={photo.title}
-                />
+  src={photo.image}
+  alt={photo.title}
+  loading="lazy"
+  decoding="async"
+/>
 
                 <div className="photo-title">
                   {photo.title}
@@ -348,6 +403,43 @@ const handlePhotoSubmit = async (event) => {
     </div>
   </div>
 )}
+
+      {/* My Account / My Photos */}
+      {showAccount && user && (
+        <div className="submission-overlay" onClick={() => setShowAccount(false)}>
+          <div className="submission-form" onClick={(event) => event.stopPropagation()}>
+            <button className="submission-close" onClick={() => setShowAccount(false)} aria-label="Close account">×</button>
+            <p className="section-label">MYNATURELENS</p>
+            <h2>👤 My Account</h2>
+            <p><strong>Email:</strong> {user.email || "Email unavailable"}</p>
+            <p><strong>My uploaded photos:</strong> {communityPhotos.filter((photo) => photo.userId === user.id).length}</p>
+            {accountMessage && <p role="status" aria-live="polite">{accountMessage}</p>}
+
+            <h3>📷 My Photos</h3>
+            {communityPhotos.filter((photo) => photo.userId === user.id).length === 0 ? (
+              <p>You haven't uploaded any photos with this account yet. New uploads will appear here.</p>
+            ) : (
+              <div className="photo-grid">
+                {communityPhotos.filter((photo) => photo.userId === user.id).map((photo) => (
+                  <div className="photo-card" key={photo.id}>
+                    <img src={photo.image} alt={photo.title} loading="lazy" decoding="async" />
+                    <div className="photo-title">{photo.title}</div>
+                    {photo.description && <p>{photo.description}</p>}
+                    <button
+                      type="button"
+                      className="auth-button"
+                      disabled={deletingPhotoId === photo.id}
+                      onClick={() => handleDeletePhoto(photo)}
+                    >
+                      {deletingPhotoId === photo.id ? "Deleting..." : "🗑️ Delete Photo"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Photo Submission Form */}
       {showForm && (
